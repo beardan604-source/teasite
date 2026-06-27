@@ -1,0 +1,214 @@
+import streamlit as st
+import sqlite3
+import pandas as pd
+from datetime import datetime
+import base64
+
+# ---- 网站标签页标题与图标 ----
+st.set_page_config(page_title="夏有时-每日茶饮", page_icon="🍵", layout="wide")
+st.title("🍵 夏有时 - 每日茶饮与存量管理")
+
+DB_FILE = 'tea_vault.db'
+
+# ---- 升级数据库：确保所有表都有图片字段，并将 location 概念对齐 ----
+def upgrade_database():
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    try:
+        cursor.execute("ALTER TABLE logs ADD COLUMN image_base64 TEXT")
+    except sqlite3.OperationalError:
+        pass 
+    try:
+        cursor.execute("ALTER TABLE teaware ADD COLUMN image_base64 TEXT")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        cursor.execute("ALTER TABLE teas ADD COLUMN image_base64 TEXT")
+    except sqlite3.OperationalError:
+        pass
+    conn.commit()
+    conn.close()
+
+upgrade_database()
+
+def get_db_connection():
+    conn = sqlite3.connect(DB_FILE)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+def fetch_data(query):
+    conn = get_db_connection()
+    df = pd.read_sql_query(query, conn)
+    conn.close()
+    return df
+
+def convert_image_to_base64(uploaded_file):
+    if uploaded_file is not None:
+        file_bytes = uploaded_file.read()
+        return base64.b64encode(file_bytes).decode()
+    return None
+
+# ---- 侧边栏：数据录入 ----
+st.sidebar.header("📥 存量与茶器入库")
+
+with st.sidebar.expander("➕ 添置新茶叶（入茶仓）", expanded=False):
+    with st.form("add_tea_form", clear_on_submit=True):
+        tea_name = st.text_input("茶叶名称")
+        tea_cat = st.selectbox("茶类", ["绿茶", "红茶", "乌龙茶", "普洱生茶", "普洱熟茶", "白茶", "黑茶", "黄茶", "花茶"])
+        tea_stock = st.number_input("购入重量 (克)", min_value=0.0, step=10.0, value=50.0)
+        # 💡 这里已经由“存放位置”更改为“茶品牌”
+        tea_brand = st.text_input("茶品牌", placeholder="如：大益 / 八马 / 自制山头茶")
+        tea_img = st.file_uploader("上传茶叶/包装照片", type=["png", "jpg", "jpeg"])
+        
+        submit_tea = st.form_submit_button("确认入仓")
+        if submit_tea and tea_name:
+            img_b64 = convert_image_to_base64(tea_img)
+            conn = get_db_connection()
+            # 依然存入原数据库的 location 字段中，但前端显示为“茶品牌”
+            conn.execute("INSERT INTO teas (name, category, stock_grams, location, image_base64) VALUES (?, ?, ?, ?, ?)",
+                         (tea_name, tea_cat, tea_stock, tea_brand, img_b64))
+            conn.commit()
+            conn.close()
+            st.sidebar.success(f"✅ {tea_name} 已成功入仓！")
+
+with st.sidebar.expander("➕ 添置新茶器（可传图）", expanded=False):
+    with st.form("add_ware_form", clear_on_submit=True):
+        ware_name = st.text_input("茶器名称")
+        ware_mat = st.text_input("材质")
+        ware_cap = st.number_input("容量 (ml)", min_value=0, step=10, value=130)
+        ware_img = st.file_uploader("上传茶器美照", type=["png", "jpg", "jpeg"])
+        
+        submit_ware = st.form_submit_button("确认添加")
+        if submit_ware and ware_name:
+            img_b64 = convert_image_to_base64(ware_img)
+            conn = get_db_connection()
+            conn.execute("INSERT INTO teaware (name, material, capacity_ml, image_base64) VALUES (?, ?, ?, ?)",
+                         (ware_name, ware_mat, ware_cap, img_b64))
+            conn.commit()
+            conn.close()
+            st.sidebar.success(f"✅ 茶器 {ware_name} 已建档！")
+
+# ---- 主页面 ----
+tab1, tab2 = st.tabs(["📝 每日喝茶打卡", "📦 查看茶仓与茶器"])
+
+with tab1:
+    st.subheader("记录今日茶席")
+    df_teas = fetch_data("SELECT id, name FROM teas")
+    df_ware = fetch_data("SELECT id, name FROM teaware")
+    
+    if df_teas.empty or df_ware.empty:
+        st.warning("⚠️ 发现茶仓或茶器空空如也？请先在左侧边栏添加茶叶和茶器，再来打卡哦！")
+    else:
+        tea_options = {row['name']: row['id'] for _, row in df_teas.iterrows()}
+        ware_options = {row['name']: row['id'] for _, row in df_ware.iterrows()}
+        
+        with st.form("log_form", clear_on_submit=True):
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                selected_tea = st.selectbox("今日冲泡茶叶", options=list(tea_options.keys()))
+            with col2:
+                selected_ware = st.selectbox("选用茶器", options=list(ware_options.keys()))
+            with col3:
+                log_date = st.date_input("饮茶日期", datetime.now())
+                
+            col4, col5, col6 = st.columns(3)
+            with col4:
+                water_temp = st.number_input("水温 (°C)", min_value=0, max_value=100, value=90)
+            with col5:
+                tea_weight = st.number_input("投茶量 (克)", min_value=0.0, step=0.1, value=5.0)
+            with col6:
+                rating = st.slider("茶汤评分", min_value=1, max_value=5, value=5)
+                
+            notes = st.text_area("品饮笔记")
+            log_img = st.file_uploader("上传今日茶汤/叶底照片", type=["png", "jpg", "jpeg"])
+            
+            submit_log = st.form_submit_button("🍵 记录这泡茶")
+            
+            if submit_log:
+                tea_id = tea_options[selected_tea]
+                ware_id = ware_options[selected_ware]
+                img_b64 = convert_image_to_base64(log_img)
+                
+                conn = get_db_connection()
+                conn.execute("INSERT INTO logs (tea_id, teaware_id, water_temp, tea_weight, rating, notes, created_at, image_base64) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                             (tea_id, ware_id, water_temp, tea_weight, rating, notes, log_date, img_b64))
+                conn.execute("UPDATE teas SET stock_grams = MAX(0, stock_grams - ?) WHERE id = ?", (tea_weight, tea_id))
+                conn.commit()
+                conn.close()
+                st.success(f"🎉 成功记录！已自动扣除 {tea_weight}g {selected_tea}。")
+                st.balloons()
+
+    st.write("---")
+    st.subheader("📜 近期饮茶随笔")
+    
+    conn = get_db_connection()
+    logs_data = conn.execute("""
+        SELECT l.created_at, t.name as tea_name, w.name as ware_name, l.water_temp, l.tea_weight, l.rating, l.notes, l.image_base64
+        FROM logs l JOIN teas t ON l.tea_id = t.id JOIN teaware w ON l.teaware_id = w.id ORDER BY l.id DESC LIMIT 10
+    """).fetchall()
+    conn.close()
+
+    if logs_data:
+        for row in logs_data:
+            with st.container(border=True):
+                c1, c2 = st.columns([3, 1])
+                with c1:
+                    st.markdown(f"### {row['created_at']} · {row['tea_name']}")
+                    st.write(f"🍵 **茶器：** {row['ware_name']} | 🌡️ **水温：** {row['water_temp']}°C | ⚖️ **投茶：** {row['tea_weight']}g | ⭐ **评分：** {row['rating']}星")
+                    st.write(f"✍️ **笔记：** {row['notes'] if row['notes'] else '未填写笔记'}")
+                with c2:
+                    if row['image_base64']:
+                        st.image(base64.b64decode(row['image_base64']), use_container_width=True)
+                    else:
+                        st.caption("📷 本次无照片")
+    else:
+        st.info("暂无饮茶记录，开始你的第一泡茶吧！")
+
+with tab2:
+    col_left, col_right = st.columns(2)
+    
+    # 📦 左侧：茶仓存量
+    with col_left:
+        st.subheader("📦 当前茶仓存量")
+        conn = get_db_connection()
+        teas_data = conn.execute("SELECT name, category, stock_grams, location, image_base64 FROM teas").fetchall()
+        conn.close()
+        
+        if teas_data:
+            for tea in teas_data:
+                with st.container(border=True):
+                    t_c1, t_c2 = st.columns([3, 1])
+                    with t_c1:
+                        st.markdown(f"#### {tea['name']}")
+                        st.write(f"🗂️ **茶类：** {tea['category']} | ⚖️ **剩余库存：** {tea['stock_grams']}g")
+                        # 💡 这里前端显示也从“存放位置”更新为了“茶品牌”
+                        st.write(f"🏷️ **茶品牌：** {tea['location'] if tea['location'] else '未知品牌'}")
+                    with t_c2:
+                        if tea['image_base64']:
+                            st.image(base64.b64decode(tea['image_base64']), use_container_width=True)
+                        else:
+                            st.caption("📷 暂无照片")
+        else:
+            st.info("茶仓空空如也，快去左侧边栏存点好茶吧！")
+            
+    # 🏺 右侧：茶器档案
+    with col_right:
+        st.subheader("🏺 茶器档案")
+        conn = get_db_connection()
+        wares_data = conn.execute("SELECT name, material, capacity_ml, image_base64 FROM teaware").fetchall()
+        conn.close()
+        
+        if wares_data:
+            for ware in wares_data:
+                with st.container(border=True):
+                    w_c1, w_c2 = st.columns([3, 1])
+                    with w_c1:
+                        st.markdown(f"#### {ware['name']}")
+                        st.write(f"🧪 **材质：** {ware['material']} | 📐 **容量：** {ware['capacity_ml']}ml")
+                    with w_c2:
+                        if ware['image_base64']:
+                            st.image(base64.b64decode(ware['image_base64']), use_container_width=True)
+                        else:
+                            st.caption("📷 暂无照片")
+        else:
+            st.info("还没有添加茶器哦~")
