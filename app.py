@@ -6,10 +6,10 @@ import psycopg2
 from psycopg2.extras import DictCursor
 
 # ---- 网站标签页标题与图标 ----
-st.set_page_config(page_title="夏有时-每日茶饮", page_icon="🍵", layout="wide")
-st.title("🍵 夏有时 - 每日茶饮与存量管理")
+st.set_page_config(page_title="夏有时-每日饮茶记录", page_icon="🍵", layout="wide")
+st.title("🍵 夏有时 - 每日饮茶记录")
 
-# 🔑 【核心位置】请把下面这一行双引号里的内容，替换为你刚刚拿到的长串连接字符串！
+# 🔑 你的专属云端密码
 DB_URI = "postgresql://postgres.byggrsuypisqxfvyrbsw:cukgoN-rijhy9-dipweq@aws-1-ap-northeast-2.pooler.supabase.com:6543/postgres"
 
 def get_db_connection():
@@ -32,9 +32,9 @@ def convert_image_to_base64(uploaded_file):
 # ---- 侧边栏：数据录入 ----
 st.sidebar.header("📥 存量与茶器入库")
 
-with st.sidebar.expander("➕ 添置新茶叶（入茶仓）", expanded=False):
+with st.sidebar.expander("➕ 添置新茶叶（入茶仓）", expanded=True):
     with st.form("add_tea_form", clear_on_submit=True):
-        tea_name = st.text_input("茶叶名称")
+        tea_name = st.text_input("茶叶名称", placeholder="例如：西湖龙井")
         tea_cat = st.selectbox("茶类", ["绿茶", "红茶", "乌龙茶", "普洱生茶", "普洱熟茶", "白茶", "黑茶", "黄茶", "花茶"])
         tea_stock = st.number_input("购入重量 (克)", min_value=0.0, step=10.0, value=50.0)
         tea_brand = st.text_input("茶品牌", placeholder="如：大益 / 八马 / 自制山头茶")
@@ -52,10 +52,10 @@ with st.sidebar.expander("➕ 添置新茶叶（入茶仓）", expanded=False):
             st.sidebar.success(f"✅ {tea_name} 已成功入仓！")
             st.rerun()
 
-with st.sidebar.expander("➕ 添置新茶器（可传图）", expanded=False):
+with st.sidebar.expander("➕ 添置新茶器（可传图）", expanded=True):
     with st.form("add_ware_form", clear_on_submit=True):
-        ware_name = st.text_input("茶器名称")
-        ware_mat = st.text_input("材质")
+        ware_name = st.text_input("茶器名称", placeholder="例如：白瓷盖碗")
+        ware_mat = st.text_input("材质", placeholder="例如：陶瓷")
         ware_cap = st.number_input("容量 (ml)", min_value=0, step=10, value=130)
         ware_img = st.file_uploader("上传茶器美照", type=["png", "jpg", "jpeg"])
         
@@ -80,7 +80,7 @@ with tab1:
     df_ware = fetch_data("SELECT id, name FROM teaware")
     
     if df_teas.empty or df_ware.empty:
-        st.warning("⚠️ 发现茶仓或茶器空空如也？请先在左侧边栏添加茶叶和茶器，再来打卡哦！")
+        st.info("💡 **新茶山开垦指南**：\n\n您的云端数据库目前是空的。请先在**左侧边栏**添加至少**一款茶叶**和**一个茶器**。添加成功后，这里就会立刻解锁“每日饮茶打卡表单”功能！")
     else:
         tea_options = {row['name']: row['id'] for _, row in df_teas.iterrows()}
         ware_options = {row['name']: row['id'] for _, row in df_ware.iterrows()}
