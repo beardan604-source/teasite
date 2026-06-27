@@ -1,39 +1,20 @@
 import streamlit as st
-import sqlite3
 import pandas as pd
 from datetime import datetime
 import base64
+import psycopg2
+from psycopg2.extras import DictCursor
 
 # ---- 网站标签页标题与图标 ----
 st.set_page_config(page_title="夏有时-每日茶饮", page_icon="🍵", layout="wide")
 st.title("🍵 夏有时 - 每日茶饮与存量管理")
 
-DB_FILE = 'tea_vault.db'
-
-# ---- 升级数据库 ----
-def upgrade_database():
-    conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
-    try:
-        cursor.execute("ALTER TABLE logs ADD COLUMN image_base64 TEXT")
-    except sqlite3.OperationalError:
-        pass 
-    try:
-        cursor.execute("ALTER TABLE teaware ADD COLUMN image_base64 TEXT")
-    except sqlite3.OperationalError:
-        pass
-    try:
-        cursor.execute("ALTER TABLE teas ADD COLUMN image_base64 TEXT")
-    except sqlite3.OperationalError:
-        pass
-    conn.commit()
-    conn.close()
-
-upgrade_database()
+# 🔑 【核心位置】请把下面这一行双引号里的内容，替换为你刚刚拿到的长串连接字符串！
+DB_URI = "postgresql://postgres.byggrsuypisqxfvyrbsw:cukgoN-rijhy9-dipweq@aws-1-ap-northeast-2.pooler.supabase.com:6543/postgres?pgbouncer=true"
 
 def get_db_connection():
-    conn = sqlite3.connect(DB_FILE)
-    conn.row_factory = sqlite3.Row
+    # 连接到 Supabase 云端数据库
+    conn = psycopg2.connect(DB_URI)
     return conn
 
 def fetch_data(query):
@@ -63,8 +44,9 @@ with st.sidebar.expander("➕ 添置新茶叶（入茶仓）", expanded=False):
         if submit_tea and tea_name:
             img_b64 = convert_image_to_base64(tea_img)
             conn = get_db_connection()
-            conn.execute("INSERT INTO teas (name, category, stock_grams, location, image_base64) VALUES (?, ?, ?, ?, ?)",
-                         (tea_name, tea_cat, tea_stock, tea_brand, img_b64))
+            with conn.cursor() as cur:
+                cur.execute("INSERT INTO teas (name, category, stock_grams, location, image_base64) VALUES (%s, %s, %s, %s, %s)",
+                            (tea_name, tea_cat, tea_stock, tea_brand, img_b64))
             conn.commit()
             conn.close()
             st.sidebar.success(f"✅ {tea_name} 已成功入仓！")
@@ -81,8 +63,9 @@ with st.sidebar.expander("➕ 添置新茶器（可传图）", expanded=False):
         if submit_ware and ware_name:
             img_b64 = convert_image_to_base64(ware_img)
             conn = get_db_connection()
-            conn.execute("INSERT INTO teaware (name, material, capacity_ml, image_base64) VALUES (?, ?, ?, ?)",
-                         (ware_name, ware_mat, ware_cap, img_b64))
+            with conn.cursor() as cur:
+                cur.execute("INSERT INTO teaware (name, material, capacity_ml, image_base64) VALUES (%s, %s, %s, %s)",
+                            (ware_name, ware_mat, ware_cap, img_b64))
             conn.commit()
             conn.close()
             st.sidebar.success(f"✅ 茶器 {ware_name} 已建档！")
@@ -125,14 +108,15 @@ with tab1:
             submit_log = st.form_submit_button("🍵 记录这泡茶")
             
             if submit_log:
-                tea_id = tea_options[selected_tea]
-                ware_id = ware_options[selected_ware]
+                tea_id = int(tea_options[selected_tea])
+                ware_id = int(ware_options[selected_ware])
                 img_b64 = convert_image_to_base64(log_img)
                 
                 conn = get_db_connection()
-                conn.execute("INSERT INTO logs (tea_id, teaware_id, water_temp, tea_weight, rating, notes, created_at, image_base64) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                             (tea_id, ware_id, water_temp, tea_weight, rating, notes, log_date, img_b64))
-                conn.execute("UPDATE teas SET stock_grams = MAX(0, stock_grams - ?) WHERE id = ?", (tea_weight, tea_id))
+                with conn.cursor() as cur:
+                    cur.execute("INSERT INTO logs (tea_id, teaware_id, water_temp, tea_weight, rating, notes, created_at, image_base64) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+                                 (tea_id, ware_id, water_temp, tea_weight, rating, notes, str(log_date), img_b64))
+                    cur.execute("UPDATE teas SET stock_grams = GREATEST(0.0, stock_grams - %s) WHERE id = %s", (tea_weight, tea_id))
                 conn.commit()
                 conn.close()
                 st.success(f"🎉 成功记录！已自动扣除 {tea_weight}g {selected_tea}。")
@@ -143,10 +127,12 @@ with tab1:
     st.subheader("📜 近期饮茶随笔")
     
     conn = get_db_connection()
-    logs_data = conn.execute("""
-        SELECT l.id as log_id, l.created_at, t.name as tea_name, l.tea_id, l.tea_weight, w.name as ware_name, l.water_temp, l.rating, l.notes, l.image_base64
-        FROM logs l JOIN teas t ON l.tea_id = t.id JOIN teaware w ON l.teaware_id = w.id ORDER BY l.id DESC LIMIT 10
-    """).fetchall()
+    with conn.cursor(cursor_factory=DictCursor) as cur:
+        cur.execute("""
+            SELECT l.id as log_id, l.created_at, t.name as tea_name, l.tea_id, l.tea_weight, w.name as ware_name, l.water_temp, l.rating, l.notes, l.image_base64
+            FROM logs l JOIN teas t ON l.tea_id = t.id JOIN teaware w ON l.teaware_id = w.id ORDER BY l.id DESC LIMIT 10
+        """)
+        logs_data = cur.fetchall()
     conn.close()
 
     if logs_data:
@@ -158,11 +144,11 @@ with tab1:
                     st.write(f"🍵 **茶器：** {row['ware_name']} | 🌡️ **水温：** {row['water_temp']}°C | ⚖️ **投茶：** {row['tea_weight']}g | ⭐ **评分：** {row['rating']}星")
                     st.write(f"✍️ **笔记：** {row['notes'] if row['notes'] else '未填写笔记'}")
                     
-                    # 💡 饮茶记录删除按钮：删除后自动把茶叶克数加回茶仓
                     if st.button(f"🗑️ 删除此条记录", key=f"del_log_{row['log_id']}"):
                         conn = get_db_connection()
-                        conn.execute("DELETE FROM logs WHERE id = ?", (row['log_id'],))
-                        conn.execute("UPDATE teas SET stock_grams = stock_grams + ? WHERE id = ?", (row['tea_weight'], row['tea_id']))
+                        with conn.cursor() as cur:
+                            cur.execute("DELETE FROM logs WHERE id = %s", (row['log_id'],))
+                            cur.execute("UPDATE teas SET stock_grams = stock_grams + %s WHERE id = %s", (row['tea_weight'], row['tea_id']))
                         conn.commit()
                         conn.close()
                         st.toast("💥 记录已删除，已自动返还茶叶库存！")
@@ -182,7 +168,9 @@ with tab2:
     with col_left:
         st.subheader("📦 当前茶仓存量")
         conn = get_db_connection()
-        teas_data = conn.execute("SELECT id, name, category, stock_grams, location, image_base64 FROM teas").fetchall()
+        with conn.cursor(cursor_factory=DictCursor) as cur:
+            cur.execute("SELECT id, name, category, stock_grams, location, image_base64 FROM teas ORDER BY id DESC")
+            teas_data = cur.fetchall()
         conn.close()
         
         if teas_data:
@@ -194,10 +182,10 @@ with tab2:
                         st.write(f"🗂️ **茶类：** {tea['category']} | ⚖️ **剩余库存：** {tea['stock_grams']}g")
                         st.write(f"🏷️ **茶品牌：** {tea['location'] if tea['location'] else '未知品牌'}")
                         
-                        # 💡 茶叶档案删除按钮
                         if st.button(f"🗑️ 销毁此茶档", key=f"del_tea_{tea['id']}"):
                             conn = get_db_connection()
-                            conn.execute("DELETE FROM teas WHERE id = ?", (tea['id'],))
+                            with conn.cursor() as cur:
+                                cur.execute("DELETE FROM teas WHERE id = %s", (tea['id'],))
                             conn.commit()
                             conn.close()
                             st.toast(f"💥 茶叶 {tea['name']} 已从茶仓移除。")
@@ -214,7 +202,9 @@ with tab2:
     with col_right:
         st.subheader("🏺 茶器档案")
         conn = get_db_connection()
-        wares_data = conn.execute("SELECT id, name, material, capacity_ml, image_base64 FROM teaware").fetchall()
+        with conn.cursor(cursor_factory=DictCursor) as cur:
+            cur.execute("SELECT id, name, material, capacity_ml, image_base64 FROM teaware ORDER BY id DESC")
+            wares_data = cur.fetchall()
         conn.close()
         
         if wares_data:
@@ -225,10 +215,10 @@ with tab2:
                         st.markdown(f"#### {ware['name']}")
                         st.write(f"🧪 **材质：** {ware['material']} | 📐 **容量：** {ware['capacity_ml']}ml")
                         
-                        # 💡 茶器档案删除按钮
                         if st.button(f"🗑️ 销毁此茶器", key=f"del_ware_{ware['id']}"):
                             conn = get_db_connection()
-                            conn.execute("DELETE FROM teaware WHERE id = ?", (ware['id'],))
+                            with conn.cursor() as cur:
+                                cur.execute("DELETE FROM teaware WHERE id = %s", (ware['id'],))
                             conn.commit()
                             conn.close()
                             st.toast(f"💥 茶器 {ware['name']} 已从档案移除。")
