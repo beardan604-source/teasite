@@ -10,7 +10,7 @@ st.set_page_config(page_title="夏有时-每日茶饮", page_icon="🍵", layout
 st.title("🍵 夏有时 - 每日茶饮与存量管理")
 
 # 🔑 【核心位置】请把下面这一行双引号里的内容，替换为你刚刚拿到的长串连接字符串！
-DB_URI = "postgresql://postgres.byggrsuypisqxfvyrbsw:cukgoN-rijhy9-dipweq@aws-1-ap-northeast-2.pooler.supabase.com:6543/postgres?pgbouncer=true"
+DB_URI = "postgresql://postgres.byggrsuypisqxfvyrbsw:cukgoN-rijhy9-dipweq@aws-1-ap-northeast-2.pooler.supabase.com:6543/postgres"
 
 def get_db_connection():
     # 连接到 Supabase 云端数据库
