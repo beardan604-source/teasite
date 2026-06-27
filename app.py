@@ -10,7 +10,7 @@ st.title("🍵 夏有时 - 每日茶饮与存量管理")
 
 DB_FILE = 'tea_vault.db'
 
-# ---- 升级数据库：确保所有表都有图片字段，并将 location 概念对齐 ----
+# ---- 升级数据库 ----
 def upgrade_database():
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
@@ -56,7 +56,6 @@ with st.sidebar.expander("➕ 添置新茶叶（入茶仓）", expanded=False):
         tea_name = st.text_input("茶叶名称")
         tea_cat = st.selectbox("茶类", ["绿茶", "红茶", "乌龙茶", "普洱生茶", "普洱熟茶", "白茶", "黑茶", "黄茶", "花茶"])
         tea_stock = st.number_input("购入重量 (克)", min_value=0.0, step=10.0, value=50.0)
-        # 💡 这里已经由“存放位置”更改为“茶品牌”
         tea_brand = st.text_input("茶品牌", placeholder="如：大益 / 八马 / 自制山头茶")
         tea_img = st.file_uploader("上传茶叶/包装照片", type=["png", "jpg", "jpeg"])
         
@@ -64,12 +63,12 @@ with st.sidebar.expander("➕ 添置新茶叶（入茶仓）", expanded=False):
         if submit_tea and tea_name:
             img_b64 = convert_image_to_base64(tea_img)
             conn = get_db_connection()
-            # 依然存入原数据库的 location 字段中，但前端显示为“茶品牌”
             conn.execute("INSERT INTO teas (name, category, stock_grams, location, image_base64) VALUES (?, ?, ?, ?, ?)",
                          (tea_name, tea_cat, tea_stock, tea_brand, img_b64))
             conn.commit()
             conn.close()
             st.sidebar.success(f"✅ {tea_name} 已成功入仓！")
+            st.rerun()
 
 with st.sidebar.expander("➕ 添置新茶器（可传图）", expanded=False):
     with st.form("add_ware_form", clear_on_submit=True):
@@ -87,6 +86,7 @@ with st.sidebar.expander("➕ 添置新茶器（可传图）", expanded=False):
             conn.commit()
             conn.close()
             st.sidebar.success(f"✅ 茶器 {ware_name} 已建档！")
+            st.rerun()
 
 # ---- 主页面 ----
 tab1, tab2 = st.tabs(["📝 每日喝茶打卡", "📦 查看茶仓与茶器"])
@@ -137,13 +137,14 @@ with tab1:
                 conn.close()
                 st.success(f"🎉 成功记录！已自动扣除 {tea_weight}g {selected_tea}。")
                 st.balloons()
+                st.rerun()
 
     st.write("---")
     st.subheader("📜 近期饮茶随笔")
     
     conn = get_db_connection()
     logs_data = conn.execute("""
-        SELECT l.created_at, t.name as tea_name, w.name as ware_name, l.water_temp, l.tea_weight, l.rating, l.notes, l.image_base64
+        SELECT l.id as log_id, l.created_at, t.name as tea_name, l.tea_id, l.tea_weight, w.name as ware_name, l.water_temp, l.rating, l.notes, l.image_base64
         FROM logs l JOIN teas t ON l.tea_id = t.id JOIN teaware w ON l.teaware_id = w.id ORDER BY l.id DESC LIMIT 10
     """).fetchall()
     conn.close()
@@ -156,6 +157,16 @@ with tab1:
                     st.markdown(f"### {row['created_at']} · {row['tea_name']}")
                     st.write(f"🍵 **茶器：** {row['ware_name']} | 🌡️ **水温：** {row['water_temp']}°C | ⚖️ **投茶：** {row['tea_weight']}g | ⭐ **评分：** {row['rating']}星")
                     st.write(f"✍️ **笔记：** {row['notes'] if row['notes'] else '未填写笔记'}")
+                    
+                    # 💡 饮茶记录删除按钮：删除后自动把茶叶克数加回茶仓
+                    if st.button(f"🗑️ 删除此条记录", key=f"del_log_{row['log_id']}"):
+                        conn = get_db_connection()
+                        conn.execute("DELETE FROM logs WHERE id = ?", (row['log_id'],))
+                        conn.execute("UPDATE teas SET stock_grams = stock_grams + ? WHERE id = ?", (row['tea_weight'], row['tea_id']))
+                        conn.commit()
+                        conn.close()
+                        st.toast("💥 记录已删除，已自动返还茶叶库存！")
+                        st.rerun()
                 with c2:
                     if row['image_base64']:
                         st.image(base64.b64decode(row['image_base64']), use_container_width=True)
@@ -171,7 +182,7 @@ with tab2:
     with col_left:
         st.subheader("📦 当前茶仓存量")
         conn = get_db_connection()
-        teas_data = conn.execute("SELECT name, category, stock_grams, location, image_base64 FROM teas").fetchall()
+        teas_data = conn.execute("SELECT id, name, category, stock_grams, location, image_base64 FROM teas").fetchall()
         conn.close()
         
         if teas_data:
@@ -181,8 +192,16 @@ with tab2:
                     with t_c1:
                         st.markdown(f"#### {tea['name']}")
                         st.write(f"🗂️ **茶类：** {tea['category']} | ⚖️ **剩余库存：** {tea['stock_grams']}g")
-                        # 💡 这里前端显示也从“存放位置”更新为了“茶品牌”
                         st.write(f"🏷️ **茶品牌：** {tea['location'] if tea['location'] else '未知品牌'}")
+                        
+                        # 💡 茶叶档案删除按钮
+                        if st.button(f"🗑️ 销毁此茶档", key=f"del_tea_{tea['id']}"):
+                            conn = get_db_connection()
+                            conn.execute("DELETE FROM teas WHERE id = ?", (tea['id'],))
+                            conn.commit()
+                            conn.close()
+                            st.toast(f"💥 茶叶 {tea['name']} 已从茶仓移除。")
+                            st.rerun()
                     with t_c2:
                         if tea['image_base64']:
                             st.image(base64.b64decode(tea['image_base64']), use_container_width=True)
@@ -195,7 +214,7 @@ with tab2:
     with col_right:
         st.subheader("🏺 茶器档案")
         conn = get_db_connection()
-        wares_data = conn.execute("SELECT name, material, capacity_ml, image_base64 FROM teaware").fetchall()
+        wares_data = conn.execute("SELECT id, name, material, capacity_ml, image_base64 FROM teaware").fetchall()
         conn.close()
         
         if wares_data:
@@ -205,6 +224,15 @@ with tab2:
                     with w_c1:
                         st.markdown(f"#### {ware['name']}")
                         st.write(f"🧪 **材质：** {ware['material']} | 📐 **容量：** {ware['capacity_ml']}ml")
+                        
+                        # 💡 茶器档案删除按钮
+                        if st.button(f"🗑️ 销毁此茶器", key=f"del_ware_{ware['id']}"):
+                            conn = get_db_connection()
+                            conn.execute("DELETE FROM teaware WHERE id = ?", (ware['id'],))
+                            conn.commit()
+                            conn.close()
+                            st.toast(f"💥 茶器 {ware['name']} 已从档案移除。")
+                            st.rerun()
                     with w_c2:
                         if ware['image_base64']:
                             st.image(base64.b64decode(ware['image_base64']), use_container_width=True)
