@@ -162,17 +162,38 @@ with tab1:
         st.info("暂无饮茶记录，开始你的第一泡茶吧！")
 
 with tab2:
+    # 🚀 ---- 新增功能：茶仓数据大屏统计 ----
+    conn = get_db_connection()
+    with conn.cursor(cursor_factory=DictCursor) as cur:
+        cur.execute("SELECT id, name, category, stock_grams, location, image_base64 FROM teas ORDER BY id DESC")
+        teas_data = cur.fetchall()
+        cur.execute("SELECT id, name, material, capacity_ml, image_base64 FROM teaware ORDER BY id DESC")
+        wares_data = cur.fetchall()
+    conn.close()
+
+    # 🧮 计算统计数据
+    total_tea_grams = sum([tea['stock_grams'] for tea in teas_data]) if teas_data else 0.0
+    active_tea_types = sum([1 for tea in teas_data if tea['stock_grams'] > 0]) if teas_data else 0
+    total_wares_count = len(wares_data) if wares_data else 0
+
+    st.subheader("📊 夏有时 · 茶仓数据大屏")
+    # 用精美的三列数字卡片展示总量
+    m_col1, m_col2, m_col3 = st.columns(3)
+    with m_col1:
+        st.metric(label="⚖️ 茶仓茶叶总重", value=f"{total_tea_grams:.1f} 克")
+    with m_col2:
+        st.metric(label="🗂️ 现有茶叶品种（有存货）", value=f"{active_tea_types} 种")
+    with m_col3:
+        st.metric(label="🏺 收藏茶器总计", value=f"{total_wares_count} 件")
+    
+    st.write("---") # 分割线
+
+    # 📦 下方原本的左右分栏：茶仓与茶器详情
     col_left, col_right = st.columns(2)
     
     # 📦 左侧：茶仓存量
     with col_left:
-        st.subheader("📦 当前茶仓存量")
-        conn = get_db_connection()
-        with conn.cursor(cursor_factory=DictCursor) as cur:
-            cur.execute("SELECT id, name, category, stock_grams, location, image_base64 FROM teas ORDER BY id DESC")
-            teas_data = cur.fetchall()
-        conn.close()
-        
+        st.subheader("📦 当前茶仓存量详情")
         if teas_data:
             for tea in teas_data:
                 with st.container(border=True):
@@ -200,13 +221,7 @@ with tab2:
             
     # 🏺 右侧：茶器档案
     with col_right:
-        st.subheader("🏺 茶器档案")
-        conn = get_db_connection()
-        with conn.cursor(cursor_factory=DictCursor) as cur:
-            cur.execute("SELECT id, name, material, capacity_ml, image_base64 FROM teaware ORDER BY id DESC")
-            wares_data = cur.fetchall()
-        conn.close()
-        
+        st.subheader("🏺 茶器档案详情")
         if wares_data:
             for ware in wares_data:
                 with st.container(border=True):
